@@ -8,9 +8,9 @@ import numpy as np
 import time
 from typing import Optional, Tuple
 import config
-from landmark_detector import LandmarkDetector
-from face_recognizer import FaceRecognizer
-from serial_communicator import ArduinoCommunicator, DataFormatter
+from .landmark_detector import LandmarkDetector
+from .face_recognizer import FaceRecognizer
+from .serial_communicator import ArduinoCommunicator, DataFormatter
 
 
 class VisionTrackingSystem:

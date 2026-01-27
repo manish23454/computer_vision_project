@@ -1,281 +1,240 @@
 """
-Landmark Detector Module
-Handles face, hand, and body landmark detection using MediaPipe
+Face Recognition Module
+Detects if the current person exists in the reference dataset
 """
 
 import cv2
-import mediapipe as mp
 import numpy as np
-from typing import Tuple, List, Optional, Dict
+import os
+from typing import Optional, List, Tuple
 import config
 
 
-class LandmarkDetector:
-    """Detects and processes landmarks based on selected mode"""
+class FaceRecognizer:
+    """Handles face recognition and dataset matching"""
     
-    def __init__(self, mode: str = None):
-        """Initialize detector with specified mode"""
-        self.mode = mode or config.DETECTION_MODE
+    def __init__(self, dataset_path: str = None):
+        """Initialize face recognizer with dataset"""
+        self.dataset_path = dataset_path or config.FACE_DATASET_PATH
+        self.reference_encodings = []
+        self.reference_names = []
         
-        if self.mode not in config.LANDMARK_CONFIGS:
-            raise ValueError(f"Invalid mode: {self.mode}. Choose from {list(config.LANDMARK_CONFIGS.keys())}")
+        # Initialize face detector
+        self.face_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        )
         
-        self.mode_config = config.LANDMARK_CONFIGS[self.mode]
+        # Load reference faces
+        self._load_dataset()
+    
+    def _load_dataset(self):
+        """Load reference faces from dataset folder"""
+        if not os.path.exists(self.dataset_path):
+            if config.DEBUG_MODE:
+                print(f"⚠ Dataset folder not found: {self.dataset_path}")
+                print(f"  Face recognition will always return 'NO'")
+            return
         
-        # Initialize MediaPipe solutions
-        self.mp_face_mesh = mp.solutions.face_mesh
-        self.mp_hands = mp.solutions.hands
-        self.mp_drawing = mp.solutions.drawing_utils
+        supported_formats = ('.jpg', '.jpeg', '.png', '.bmp')
+        image_files = [f for f in os.listdir(self.dataset_path) 
+                      if f.lower().endswith(supported_formats)]
         
-        # Initialize detectors based on mode requirements
-        self.face_mesh = None
-        self.hands = None
+        if not image_files:
+            if config.DEBUG_MODE:
+                print(f"⚠ No images found in dataset: {self.dataset_path}")
+            return
         
-        if self.mode_config['use_face']:
-            self.face_mesh = self.mp_face_mesh.FaceMesh(
-                max_num_faces=config.MAX_NUM_FACES,
-                refine_landmarks=True,
-                min_detection_confidence=config.FACE_DETECTION_CONFIDENCE,
-                min_tracking_confidence=config.FACE_TRACKING_CONFIDENCE
-            )
-        
-        if self.mode_config['use_hands']:
-            self.hands = self.mp_hands.Hands(
-                max_num_hands=config.MAX_NUM_HANDS,
-                min_detection_confidence=config.HAND_DETECTION_CONFIDENCE,
-                min_tracking_confidence=config.HAND_TRACKING_CONFIDENCE
-            )
+        for image_file in image_files:
+            image_path = os.path.join(self.dataset_path, image_file)
+            image = cv2.imread(image_path)
+            
+            if image is None:
+                continue
+            
+            # Extract face encoding
+            encoding = self._get_face_encoding(image)
+            
+            if encoding is not None:
+                self.reference_encodings.append(encoding)
+                # Use filename without extension as name
+                name = os.path.splitext(image_file)[0]
+                self.reference_names.append(name)
+                
+                if config.DEBUG_MODE:
+                    print(f"  ✓ Loaded reference face: {name}")
         
         if config.DEBUG_MODE:
-            print(f"✓ Landmark Detector initialized in '{self.mode}' mode")
-            print(f"  Description: {self.mode_config['description']}")
+            print(f"✓ Face Recognizer initialized with {len(self.reference_encodings)} reference faces")
     
-    def detect(self, frame: np.ndarray) -> Tuple[Optional[Tuple[int, int]], Optional[float], np.ndarray]:
+    def _get_face_encoding(self, image: np.ndarray) -> Optional[np.ndarray]:
         """
-        Detect landmarks and calculate position
-        
-        Returns:
-            position: (x, y) tuple of landmark position or None
-            distance_ratio: Estimated distance ratio or None
-            annotated_frame: Frame with visual annotations
+        Extract face encoding from image
+        Uses histogram of oriented gradients (HOG) as a simple feature descriptor
         """
-        if frame is None:
-            return None, None, frame
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         
-        # Convert to RGB for MediaPipe
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        h, w, _ = frame.shape
+        # Detect face
+        faces = self.face_cascade.detectMultiScale(
+            gray, 
+            scaleFactor=1.1, 
+            minNeighbors=5, 
+            minSize=(50, 50)
+        )
         
-        position = None
-        distance_ratio = None
-        annotated_frame = frame.copy()
-        
-        # Process based on mode
-        if self.mode_config['use_face']:
-            position, distance_ratio = self._process_face(rgb_frame, annotated_frame, w, h)
-        
-        elif self.mode_config['use_hands']:
-            position, distance_ratio = self._process_hands(rgb_frame, annotated_frame, w, h)
-        
-        # Draw center lines
-        if config.SHOW_INFO_OVERLAY:
-            self._draw_center_lines(annotated_frame, w, h)
-        
-        return position, distance_ratio, annotated_frame
-    
-    def _process_face(self, rgb_frame, annotated_frame, w, h) -> Tuple[Optional[Tuple[int, int]], Optional[float]]:
-        """Process face landmarks"""
-        results = self.face_mesh.process(rgb_frame)
-        
-        if not results.multi_face_landmarks:
-            return None, None
+        if len(faces) == 0:
+            return None
         
         # Use first detected face
-        face_landmarks = results.multi_face_landmarks[0]
+        (x, y, w, h) = faces[0]
+        face_roi = gray[y:y+h, x:x+w]
         
-        # Get target landmarks
-        target_indices = self.mode_config['landmarks']
-        reference_indices = self.mode_config['reference_landmarks']
+        # Resize to standard size
+        face_roi = cv2.resize(face_roi, (128, 128))
         
-        # Calculate average position of target landmarks
-        target_points = []
-        for idx in target_indices:
-            landmark = face_landmarks.landmark[idx]
-            x = int(landmark.x * w)
-            y = int(landmark.y * h)
-            target_points.append((x, y))
-            
-            if config.SHOW_LANDMARKS:
-                cv2.circle(annotated_frame, (x, y), 5, config.LANDMARK_COLOR, -1)
+        # Calculate HOG features
+        encoding = self._calculate_hog_features(face_roi)
         
-        # Average position
-        avg_x = int(np.mean([p[0] for p in target_points]))
-        avg_y = int(np.mean([p[1] for p in target_points]))
-        position = (avg_x, avg_y)
-        
-        # Calculate distance ratio using reference landmarks
-        ref_points = []
-        for idx in reference_indices:
-            landmark = face_landmarks.landmark[idx]
-            x = int(landmark.x * w)
-            y = int(landmark.y * h)
-            ref_points.append((x, y))
-        
-        if len(ref_points) >= 2:
-            # Calculate Euclidean distance between reference points
-            p1, p2 = ref_points[0], ref_points[1]
-            distance_pixels = np.sqrt((p2[0] - p1[0])**2 + (p2[1] - p1[1])**2)
-            # Normalize by frame diagonal
-            frame_diagonal = np.sqrt(w**2 + h**2)
-            distance_ratio = distance_pixels / frame_diagonal
-        else:
-            distance_ratio = None
-        
-        # Draw tracking indicator
-        if config.SHOW_LANDMARKS:
-            cv2.circle(annotated_frame, position, 10, (0, 0, 255), 2)
-            cv2.line(annotated_frame, (position[0]-15, position[1]), 
-                    (position[0]+15, position[1]), (0, 0, 255), 2)
-            cv2.line(annotated_frame, (position[0], position[1]-15), 
-                    (position[0], position[1]+15), (0, 0, 255), 2)
-        
-        return position, distance_ratio
+        return encoding
     
-    def _process_hands(self, rgb_frame, annotated_frame, w, h) -> Tuple[Optional[Tuple[int, int]], Optional[float]]:
-        """Process hand landmarks"""
-        results = self.hands.process(rgb_frame)
+    def _calculate_hog_features(self, image: np.ndarray) -> np.ndarray:
+        """Calculate HOG (Histogram of Oriented Gradients) features"""
+        # Simple histogram-based features for demonstration
+        # In production, use face_recognition library or deep learning models
         
-        if not results.multi_hand_landmarks:
-            return None, None
+        # Calculate gradients
+        gx = cv2.Sobel(image, cv2.CV_64F, 1, 0, ksize=3)
+        gy = cv2.Sobel(image, cv2.CV_64F, 0, 1, ksize=3)
         
-        # Use first detected hand
-        hand_landmarks = results.multi_hand_landmarks[0]
+        # Calculate magnitude and angle
+        magnitude = np.sqrt(gx**2 + gy**2)
+        angle = np.arctan2(gy, gx) * 180 / np.pi
         
-        # Get target landmarks
-        target_indices = self.mode_config['landmarks']
-        reference_indices = self.mode_config['reference_landmarks']
+        # Create histogram of gradients
+        hist, _ = np.histogram(angle, bins=32, range=(-180, 180), weights=magnitude)
         
-        # Calculate average position of target landmarks
-        target_points = []
-        for idx in target_indices:
-            landmark = hand_landmarks.landmark[idx]
-            x = int(landmark.x * w)
-            y = int(landmark.y * h)
-            target_points.append((x, y))
-            
-            if config.SHOW_LANDMARKS:
-                cv2.circle(annotated_frame, (x, y), 5, config.LANDMARK_COLOR, -1)
+        # Normalize
+        hist = hist / (np.sum(hist) + 1e-6)
         
-        # Average position
-        avg_x = int(np.mean([p[0] for p in target_points]))
-        avg_y = int(np.mean([p[1] for p in target_points]))
-        position = (avg_x, avg_y)
+        # Also include pixel intensity histogram
+        pixel_hist, _ = np.histogram(image, bins=32, range=(0, 256))
+        pixel_hist = pixel_hist / (np.sum(pixel_hist) + 1e-6)
         
-        # Calculate distance ratio using reference landmarks
-        ref_points = []
-        for idx in reference_indices:
-            landmark = hand_landmarks.landmark[idx]
-            x = int(landmark.x * w)
-            y = int(landmark.y * h)
-            ref_points.append((x, y))
+        # Combine features
+        features = np.concatenate([hist, pixel_hist])
         
-        if len(ref_points) >= 2:
-            p1, p2 = ref_points[0], ref_points[1]
-            distance_pixels = np.sqrt((p2[0] - p1[0])**2 + (p2[1] - p1[1])**2)
-            frame_diagonal = np.sqrt(w**2 + h**2)
-            distance_ratio = distance_pixels / frame_diagonal
-        else:
-            distance_ratio = None
-        
-        # Draw hand skeleton
-        if config.SHOW_LANDMARKS:
-            self.mp_drawing.draw_landmarks(
-                annotated_frame,
-                hand_landmarks,
-                self.mp_hands.HAND_CONNECTIONS
-            )
-            cv2.circle(annotated_frame, position, 10, (0, 0, 255), 2)
-        
-        return position, distance_ratio
+        return features
     
-    def _draw_center_lines(self, frame, w, h):
-        """Draw center reference lines"""
-        # Vertical center line
-        cv2.line(frame, (w//2, 0), (w//2, h), config.CENTER_LINE_COLOR, 1)
-        # Horizontal center line
-        cv2.line(frame, (0, h//2), (w, h//2), config.CENTER_LINE_COLOR, 1)
-        
-        # Draw center zone rectangle
-        left_threshold = int(w * config.HORIZONTAL_POSITIONS['left_threshold'])
-        right_threshold = int(w * config.HORIZONTAL_POSITIONS['right_threshold'])
-        up_threshold = int(h * config.VERTICAL_POSITIONS['up_threshold'])
-        down_threshold = int(h * config.VERTICAL_POSITIONS['down_threshold'])
-        
-        cv2.rectangle(frame, 
-                     (left_threshold, up_threshold),
-                     (right_threshold, down_threshold),
-                     config.CENTER_LINE_COLOR, 1)
-    
-    def calculate_position_labels(self, position: Tuple[int, int], 
-                                  frame_width: int, 
-                                  frame_height: int) -> Tuple[str, str]:
+    def recognize(self, frame: np.ndarray) -> Tuple[bool, Optional[str], float]:
         """
-        Calculate horizontal and vertical position labels
+        Check if face in frame matches any reference face
         
         Returns:
-            horizontal_label: 'LEFT', 'CENTER', or 'RIGHT'
-            vertical_label: 'UP', 'CENTER', or 'DOWN'
+            is_match: True if face matches dataset
+            matched_name: Name of matched person or None
+            confidence: Confidence score (0-1)
         """
-        if position is None:
-            return 'NONE', 'NONE'
+        if not config.ENABLE_FACE_RECOGNITION:
+            return False, None, 0.0
         
-        x, y = position
+        if len(self.reference_encodings) == 0:
+            # No reference faces loaded
+            return False, None, 0.0
         
-        # Normalize to 0-1 range
-        norm_x = x / frame_width
-        norm_y = y / frame_height
+        # Get encoding for current frame
+        current_encoding = self._get_face_encoding(frame)
         
-        # Horizontal position
-        if norm_x < config.HORIZONTAL_POSITIONS['left_threshold']:
-            horizontal = 'LEFT'
-        elif norm_x > config.HORIZONTAL_POSITIONS['right_threshold']:
-            horizontal = 'RIGHT'
-        else:
-            horizontal = 'CENTER'
+        if current_encoding is None:
+            # No face detected
+            return False, None, 0.0
         
-        # Vertical position
-        if norm_y < config.VERTICAL_POSITIONS['up_threshold']:
-            vertical = 'UP'
-        elif norm_y > config.VERTICAL_POSITIONS['down_threshold']:
-            vertical = 'DOWN'
-        else:
-            vertical = 'CENTER'
+        # Compare with all reference encodings
+        best_match_idx = None
+        best_distance = float('inf')
         
-        return horizontal, vertical
+        for idx, ref_encoding in enumerate(self.reference_encodings):
+            # Calculate Euclidean distance
+            distance = np.linalg.norm(current_encoding - ref_encoding)
+            
+            if distance < best_distance:
+                best_distance = distance
+                best_match_idx = idx
+        
+        # Convert distance to confidence (inverse relationship)
+        # Normalize distance to 0-1 range
+        confidence = max(0, 1 - (best_distance / 2.0))
+        
+        # Check if best match is within tolerance
+        is_match = confidence > (1 - config.FACE_RECOGNITION_TOLERANCE)
+        matched_name = self.reference_names[best_match_idx] if is_match else None
+        
+        if config.DEBUG_MODE and is_match:
+            print(f"  ✓ Face matched: {matched_name} (confidence: {confidence:.2f})")
+        
+        return is_match, matched_name, confidence
     
-    def calculate_distance_label(self, distance_ratio: Optional[float]) -> str:
+    def get_match_label(self, frame: np.ndarray) -> str:
         """
-        Calculate distance label based on landmark separation
+        Simple YES/NO label for whether face matches dataset
         
         Returns:
-            'NEAR', 'MEDIUM', or 'FAR'
+            'YES' if match found, 'NO' otherwise
         """
-        if distance_ratio is None:
-            return 'UNKNOWN'
-        
-        if distance_ratio > config.DISTANCE_NEAR_THRESHOLD:
-            return 'NEAR'
-        elif distance_ratio < config.DISTANCE_FAR_THRESHOLD:
-            return 'FAR'
-        else:
-            return 'MEDIUM'
+        is_match, _, _ = self.recognize(frame)
+        return 'YES' if is_match else 'NO'
     
-    def cleanup(self):
-        """Release resources"""
-        if self.face_mesh:
-            self.face_mesh.close()
-        if self.hands:
-            self.hands.close()
+    def add_reference_face(self, image: np.ndarray, name: str) -> bool:
+        """
+        Add a new reference face to the dataset
+        
+        Args:
+            image: Face image
+            name: Person's name
+        
+        Returns:
+            True if face added successfully
+        """
+        encoding = self._get_face_encoding(image)
+        
+        if encoding is None:
+            return False
+        
+        self.reference_encodings.append(encoding)
+        self.reference_names.append(name)
+        
+        # Save image to dataset folder
+        if not os.path.exists(self.dataset_path):
+            os.makedirs(self.dataset_path)
+        
+        filename = f"{name}.jpg"
+        filepath = os.path.join(self.dataset_path, filename)
+        cv2.imwrite(filepath, image)
         
         if config.DEBUG_MODE:
-            print("✓ Landmark Detector cleaned up")
+            print(f"✓ Added reference face: {name}")
+        
+        return True
+    
+    def visualize_match(self, frame: np.ndarray, is_match: bool, 
+                       matched_name: Optional[str] = None, 
+                       confidence: float = 0.0) -> np.ndarray:
+        """Draw match information on frame"""
+        annotated = frame.copy()
+        
+        # Detect face for bounding box
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = self.face_cascade.detectMultiScale(gray, 1.1, 5, minSize=(50, 50))
+        
+        for (x, y, w, h) in faces:
+            # Draw bounding box
+            color = (0, 255, 0) if is_match else (0, 0, 255)
+            cv2.rectangle(annotated, (x, y), (x+w, y+h), color, 2)
+            
+            # Draw label
+            label = f"{matched_name} ({confidence:.2f})" if is_match else "Unknown"
+            label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+            cv2.rectangle(annotated, (x, y - label_size[1] - 10), 
+                         (x + label_size[0], y), color, -1)
+            cv2.putText(annotated, label, (x, y - 5), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        
+        return annotated
