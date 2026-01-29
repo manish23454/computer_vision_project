@@ -6,11 +6,17 @@ Main system that integrates landmark detection, face recognition, and Arduino co
 import cv2
 import numpy as np
 import time
+import sys
+from pathlib import Path
 from typing import Optional, Tuple
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import config
-from .landmark_detector import LandmarkDetector
-from .face_recognizer import FaceRecognizer
-from .serial_communicator import ArduinoCommunicator, DataFormatter
+from Core_System_Files.landmark_detector import LandmarkDetector
+from Core_System_Files.face_recognizer import FaceRecognizer
+from Core_System_Files.serial_communicator import ArduinoCommunicator, DataFormatter
 
 
 class VisionTrackingSystem:

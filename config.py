@@ -7,7 +7,7 @@ Easily change detection modes and system parameters here
 # DETECTION MODE SELECTION
 # ============================================================================
 # Available modes: 'head', 'eye', 'mouth', 'hand', 'ear'
-DETECTION_MODE = 'head'  # <-- CHANGE THIS TO SWITCH MODES
+DETECTION_MODE = 'ear'  # <-- CHANGE THIS TO SWITCH MODES
 
 # ============================================================================
 # LANDMARK MAPPINGS FOR EACH MODE
@@ -63,7 +63,7 @@ LANDMARK_CONFIGS = {
 # POSITION THRESHOLDS (adjustable for sensitivity)
 # ============================================================================
 # Horizontal thresholds (fraction of frame width)
-HORIZONTAL_CENTER_THRESHOLD = 0.15  # ±15% is considered CENTER
+HORIZONTAL_CENTER_THRESHOLD = 0.3  # ±15% is considered CENTER
 HORIZONTAL_POSITIONS = {
     'left_threshold': 0.5 - HORIZONTAL_CENTER_THRESHOLD,
     'right_threshold': 0.5 + HORIZONTAL_CENTER_THRESHOLD
@@ -77,8 +77,8 @@ VERTICAL_POSITIONS = {
 }
 
 # Distance thresholds (based on landmark separation ratio)
-DISTANCE_NEAR_THRESHOLD = 0.25  # Above this ratio = NEAR
-DISTANCE_FAR_THRESHOLD = 0.15   # Below this ratio = FAR
+DISTANCE_NEAR_THRESHOLD = 0.5  # Above this ratio = NEAR
+DISTANCE_FAR_THRESHOLD = 0.5  # Below this ratio = FAR
 # Between these values = MEDIUM
 
 # ============================================================================
@@ -87,7 +87,7 @@ DISTANCE_FAR_THRESHOLD = 0.15   # Below this ratio = FAR
 CAMERA_INDEX = 0  # Default webcam (change if using external camera)
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
-FPS = 30
+FPS = 10
 
 # ============================================================================
 # SERIAL COMMUNICATION SETTINGS
@@ -102,7 +102,7 @@ ENABLE_SERIAL = False  # Set to True when Arduino is connected
 # FACE RECOGNITION SETTINGS
 # ============================================================================
 FACE_DATASET_PATH = 'face_dataset'  # Folder containing reference images
-FACE_RECOGNITION_TOLERANCE = 0.6    # Lower = stricter matching (0.0-1.0)
+FACE_RECOGNITION_TOLERANCE = 0.1    # Lower = stricter matching (0.0-1.0)
 ENABLE_FACE_RECOGNITION = True      # Set to False to disable face matching
 
 # ============================================================================
